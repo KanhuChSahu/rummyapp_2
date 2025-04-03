@@ -186,32 +186,26 @@ public class UserService {
         return true;
     }
 
-    public Map<String, Object> loginWithCredentials(UserLoginDto loginDto, HttpServletRequest request) {
-        String clientIp = getClientIp(request);
-        
-        // Check if IP is blocked
-        if (isIpBlocked(clientIp)) {
-            throw new UserServiceException("Too many failed attempts. Please try again later.");
+    public Map<String, Object> loginWithCredentials(UserLoginDto loginDto) {
+        User user = userRepository.findByMobileNumber(loginDto.getMobileNumber())
+            .orElseThrow(() -> new UserServiceException("User not found"));
+try{
+        if (!user.isVerified()) {
+            throw new UserServiceException("Mobile number not verified");
         }
 
-        try {
-            // Authenticate using Spring Security
-            org.springframework.security.core.Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(loginDto.getUsername(), loginDto.getPassword())
-            );
-
-            User user = userRepository.findByUsername(loginDto.getUsername())
-                .orElseThrow(() -> new UserServiceException("User not found"));
+        // Validate OTP
+        if (!defaultOtp.equals(loginDto.getOtp())) {
+            throw new UserServiceException("Invalid OTP");
+        }
+           
 
             if (!user.isVerified()) {
                 throw new UserServiceException("Account not verified");
             }
 
             // Reset login attempts on successful login
-            loginAttempts.remove(clientIp);
-
-            // Update last login IP
-            user.setLastLoginIp(clientIp);
+           
             userRepository.save(user);
 
             Map<String, Object> response = new HashMap<>();
@@ -221,7 +215,7 @@ public class UserService {
             response.put("balance", user.getBalance());
             return response;
         } catch (AuthenticationException e) {
-            recordFailedAttempt(clientIp);
+            // recordFailedAttempt(clientIp);
             throw new UserServiceException("Invalid username or password");
         }
     }

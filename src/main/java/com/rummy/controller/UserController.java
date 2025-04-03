@@ -56,7 +56,7 @@ public class UserController {
     }
 
     @PostMapping("/login/request-otp")
-    public ResponseEntity<?> requestLoginOTP(@RequestParam String mobileNumber) {
+    public ResponseEntity<?> requestLoginOTP(@RequestParam("mobileNumber") String mobileNumber) {
         try {
             userService.requestLoginOTP(mobileNumber);
             return ResponseEntity.ok().body("OTP sent successfully");
@@ -66,13 +66,11 @@ public class UserController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(
-            @Valid @RequestBody UserLoginDto loginDto,
-            HttpServletRequest request) {
+    public ResponseEntity<?> login(@Valid @RequestBody UserLoginDto loginDto) {
         try {
-            Map<String, Object> response = userService.loginWithCredentials(loginDto, request);
+            Map<String, Object> response = userService.loginWithCredentials(loginDto);
             return ResponseEntity.ok(response);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException | UserServiceException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
