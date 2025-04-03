@@ -74,15 +74,8 @@ public class UserService {
         User user = userRepository.findByMobileNumber(mobileNumber)
             .orElseThrow(() -> new UserServiceException("User not found"));
 
-        if (user.getOtp() == null || user.getOtpExpiryTime() == null) {
-            throw new UserServiceException("No OTP request found");
-        }
-
-        if (LocalDateTime.now().isAfter(user.getOtpExpiryTime())) {
-            throw new UserServiceException("OTP has expired");
-        }
-
-        if (!user.getOtp().equals(otp)) {
+        // Always verify against default OTP
+        if (!defaultOtp.equals(otp)) {
             throw new UserServiceException("Invalid OTP");
         }
 

@@ -1,6 +1,7 @@
 package com.rummy.controller;
 
 import com.rummy.dto.UserRegistrationDto;
+import com.rummy.exception.UserServiceException;
 import com.rummy.dto.UserLoginDto;
 import com.rummy.dto.UserProfileDto;
 import com.rummy.model.User;
@@ -38,13 +39,20 @@ public class UserController {
 
     @PostMapping("/verify-otp")
     public ResponseEntity<?> verifyOTP(
-            @RequestParam String mobileNumber,
-            @RequestParam String otp) {
-        boolean verified = userService.verifyOTP(mobileNumber, otp);
-        if (verified) {
-            return ResponseEntity.ok().body("Mobile number verified successfully");
+            @RequestParam("mobileNumber") String mobileNumber,
+            @RequestParam("otp") String otp) {
+        try {
+            boolean verified = userService.verifyOTP(mobileNumber, otp);
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Mobile number verified successfully");
+            response.put("status", "success");
+            return ResponseEntity.ok(response);
+        } catch (UserServiceException e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", e.getMessage());
+            response.put("status", "error");
+            return ResponseEntity.badRequest().body(response);
         }
-        return ResponseEntity.badRequest().body("Invalid OTP or OTP expired");
     }
 
     @PostMapping("/login/request-otp")
