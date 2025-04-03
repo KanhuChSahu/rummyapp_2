@@ -20,7 +20,7 @@ public class User {
     private String username;
 
     @NotBlank(message = "Mobile number is required")
-    @Pattern(regexp = "^\\d{10}$", message = "Invalid mobile number format")
+    @Pattern(regexp = "^[6-9]\\d{9}$", message = "Invalid Indian mobile number format. Must be 10 digits starting with 6-9")
     @Column(unique = true)
     private String mobileNumber;
 

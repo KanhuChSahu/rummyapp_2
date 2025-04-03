@@ -62,7 +62,7 @@ public class UserController {
             @Valid @RequestBody UserLoginDto loginDto,
             HttpServletRequest request) {
         try {
-            Map<String, Object> response = userService.loginWithOTP(loginDto, request);
+            Map<String, Object> response = userService.loginWithCredentials(loginDto, request);
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

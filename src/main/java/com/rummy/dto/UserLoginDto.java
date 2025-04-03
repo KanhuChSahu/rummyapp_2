@@ -13,4 +13,9 @@ public class UserLoginDto {
     @NotBlank(message = "OTP is required")
     @Pattern(regexp = "^\\d{6}$", message = "Invalid OTP format")
     private String otp;
+
+    private String username;
+
+    @NotBlank(message = "Password is required")
+    private String password;
 }

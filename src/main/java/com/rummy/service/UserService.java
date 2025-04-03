@@ -6,7 +6,13 @@ import com.rummy.dto.UserProfileDto;
 import com.rummy.model.User;
 import com.rummy.repository.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
+
+import org.springframework.security.core.AuthenticationException;
+
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -23,6 +29,15 @@ public class UserService {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Value("${otp.default.value}")
+    private String defaultOtp;
+
+    @Value("${otp.expiry.minutes}")
+    private int otpExpiryMinutes;
+
+    @Autowired
+    private SmsService smsService;
 
     public User registerUser(UserRegistrationDto registrationDto, HttpServletRequest request) {
         // Validate if passwords match
@@ -45,10 +60,12 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(registrationDto.getPassword()));
         user.setLastLoginIp(getClientIp(request));
         
-        // Generate and set OTP
-        String otp = generateOTP();
-        user.setOtp(otp);
-        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(10));
+        // Set default OTP
+        user.setOtp(defaultOtp);
+        user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(otpExpiryMinutes));
+
+        // Log OTP assignment
+        smsService.sendOtp(user.getMobileNumber(), defaultOtp);
 
         return userRepository.save(user);
     }
@@ -102,8 +119,8 @@ public class UserService {
         user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(10));
         userRepository.save(user);
 
-        // TODO: Integrate with SMS service to send OTP
-        System.out.println("Login OTP for testing: " + otp);
+        // Send OTP via SMS
+        smsService.sendOtp(mobileNumber, otp);
     }
 
     public User getUserProfile(Long userId) {
@@ -142,8 +159,8 @@ public class UserService {
             String otp = generateOTP();
             user.setOtp(otp);
             user.setOtpExpiryTime(LocalDateTime.now().plusMinutes(10));
-            // TODO: Integrate with SMS service to send OTP
-            System.out.println("Verification OTP for new mobile number: " + otp);
+            // Send OTP via SMS for new mobile number verification
+            smsService.sendOtp(profileDto.getMobileNumber(), otp);
         }
 
         return userRepository.save(user);
@@ -154,7 +171,29 @@ public class UserService {
     private Map<String, Integer> loginAttempts = new HashMap<>();
     private Map<String, LocalDateTime> blockedIPs = new HashMap<>();
 
-    public Map<String, Object> loginWithOTP(UserLoginDto loginDto, HttpServletRequest request) {
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
+    public boolean isValidOTP(String mobileNumber, String otp) {
+        User user = userRepository.findByMobileNumber(mobileNumber)
+            .orElseThrow(() -> new UserServiceException("User not found"));
+
+        if (user.getOtp() == null || user.getOtpExpiryTime() == null) {
+            throw new UserServiceException("No OTP request found");
+        }
+
+        if (LocalDateTime.now().isAfter(user.getOtpExpiryTime())) {
+            throw new UserServiceException("OTP has expired");
+        }
+
+        if (!user.getOtp().equals(otp)) {
+            throw new UserServiceException("Invalid OTP");
+        }
+
+        return true;
+    }
+
+    public Map<String, Object> loginWithCredentials(UserLoginDto loginDto, HttpServletRequest request) {
         String clientIp = getClientIp(request);
         
         // Check if IP is blocked
@@ -163,24 +202,16 @@ public class UserService {
         }
 
         try {
-            User user = userRepository.findByMobileNumber(loginDto.getMobileNumber())
+            // Authenticate using Spring Security
+            org.springframework.security.core.Authentication authentication = authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(loginDto.getUsername(), loginDto.getPassword())
+            );
+
+            User user = userRepository.findByUsername(loginDto.getUsername())
                 .orElseThrow(() -> new UserServiceException("User not found"));
 
             if (!user.isVerified()) {
-                throw new UserServiceException("Mobile number not verified");
-            }
-
-            if (user.getOtp() == null || user.getOtpExpiryTime() == null) {
-                throw new UserServiceException("Please request OTP first");
-            }
-
-            if (LocalDateTime.now().isAfter(user.getOtpExpiryTime())) {
-                throw new UserServiceException("OTP has expired");
-            }
-
-            if (!user.getOtp().equals(loginDto.getOtp())) {
-                recordFailedAttempt(clientIp);
-                throw new UserServiceException("Invalid OTP");
+                throw new UserServiceException("Account not verified");
             }
 
             // Reset login attempts on successful login
@@ -188,8 +219,6 @@ public class UserService {
 
             // Update last login IP
             user.setLastLoginIp(clientIp);
-            user.setOtp(null);
-            user.setOtpExpiryTime(null);
             userRepository.save(user);
 
             Map<String, Object> response = new HashMap<>();
@@ -198,32 +227,31 @@ public class UserService {
             response.put("kycStatus", user.getKycStatus());
             response.put("balance", user.getBalance());
             return response;
-        } catch (UserServiceException e) {
+        } catch (AuthenticationException e) {
             recordFailedAttempt(clientIp);
-            throw e;
+            throw new UserServiceException("Invalid username or password");
         }
     }
 
-    private boolean isIpBlocked(String ip) {
-        LocalDateTime blockedTime = blockedIPs.get(ip);
+    private void recordFailedAttempt(String clientIp) {
+        int attempts = loginAttempts.getOrDefault(clientIp, 0) + 1;
+        loginAttempts.put(clientIp, attempts);
+
+        if (attempts >= MAX_LOGIN_ATTEMPTS) {
+            blockedIPs.put(clientIp, LocalDateTime.now());
+            loginAttempts.remove(clientIp);
+            throw new UserServiceException("Account locked due to too many failed attempts");
+        }
+    }
+
+    private boolean isIpBlocked(String clientIp) {
+        LocalDateTime blockedTime = blockedIPs.get(clientIp);
         if (blockedTime != null) {
             if (LocalDateTime.now().isBefore(blockedTime.plusMinutes(IP_BLOCK_DURATION_MINUTES))) {
                 return true;
-            } else {
-                // Unblock IP after duration
-                blockedIPs.remove(ip);
-                loginAttempts.remove(ip);
             }
+            blockedIPs.remove(clientIp);
         }
         return false;
-    }
-
-    private void recordFailedAttempt(String ip) {
-        int attempts = loginAttempts.getOrDefault(ip, 0) + 1;
-        loginAttempts.put(ip, attempts);
-        
-        if (attempts >= MAX_LOGIN_ATTEMPTS) {
-            blockedIPs.put(ip, LocalDateTime.now());
-        }
     }
 }
